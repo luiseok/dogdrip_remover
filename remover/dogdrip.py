@@ -29,16 +29,19 @@ class DogdripRemover(object):
                 self.logger.debug("URL: %s", str(self.CHROME_DRIVER_URL.get(arch)))
                 wget.download(self.CHROME_DRIVER_URL.get(arch), './chromedriver.zip')
                 self.logger.debug("크롬드라이버 다운로드 성공. 압축 해제")
-
-            chromedriver = zipfile.ZipFile('./chromedriver.zip')
-            chromedriver.extractall('./')
+                chromedriver = zipfile.ZipFile('./chromedriver.zip')
+                chromedriver.extractall('./')
+            else:
+                chromedriver = zipfile.ZipFile('./chromedriver.zip')
             self.driverPath = os.path.realpath(chromedriver.namelist()[0])
             self.logger.debug("압축해제 완료. chromedriver 위치: %s", self.driverPath)
             chromedriver.close()
 
-            st = os.stat(self.driverPath)
-            os.chmod(self.driverPath, st.st_mode | stat.S_IEXEC)
-            self.logger.debug("크롬 드라이버 권한 변경 완료 +x")
+            # Chromedriver 실행권한 부여
+            if not arch == "Windows":
+                st = os.stat(self.driverPath)
+                os.chmod(self.driverPath, st.st_mode | stat.S_IEXEC)
+                self.logger.debug("크롬 드라이버 권한 변경 완료 +x")
 
         except Exception as e:
             self.logger.error("크롬 드라이버 다운로드에 실패했습니다.")
