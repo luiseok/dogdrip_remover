@@ -72,25 +72,29 @@ class XpressEngine(object):
         self.browser.get(self.url + self.MY_PAGE)
         pass
 
-    def load_own_documents(self, page=1):
+    def load_my_documents(self, page=1):
         self.browser.get(self.url + self.OWN_DOCUMENTS + '&page=' + str(page))
         self.browser.implicitly_wait(3)
         pass
 
-    def load_own_documents_html(self, page=1):
-        self.load_own_documents(page)
+    def load_my_documents_html(self, page=1):
+        self.load_my_documents(page)
         html = self.browser.execute_script(
             'return window.document.getElementsByClassName("colTable")[0].innerHTML'
         )
         return BeautifulSoup(html, 'html.parser')
 
-    def load_own_comments(self, page=1):
+    def load_my_comments(self, page=1):
         self.browser.get(self.url + self.OWN_COMMENTS + '&page=' + str(page))
         self.browser.implicitly_wait(3)
 
-    def load_own_comments_html(self, page=1):
-        self.load_own_comments(page)
+    def load_my_comments_html(self, page=1):
+        self.load_my_comments(page)
         html = self.browser.execute_script(
             'return window.document.getElementsByClassName("colTable")[0].innerHTML'
         )
         return BeautifulSoup(html, 'html.parser')
+
+    def quit(self):
+        self.browser.quit()
+        pass
