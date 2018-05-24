@@ -76,56 +76,101 @@ class DogdripRemover(object):
             조건 처리에 대한 모든 질의를 http request를 통해 하는것보다 빠른 처리성능을 꾀하고자 sqlite3를 사용한다.
         """
         # 문서
-        self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS documents (document_srl TEXT PRIMARY KEY, href TEXT NOT NULL, title TEXT, content TEXT, view_count INT, comment_count INT, vote_up INT, vote_down INT, created_at TEXT,  target_board TEXT, is_deleted INTEGER DEFAULT 0)")
-        """
+        self.logger.info("SQLite3 초기화중...")
+        self.conn.execute("""
             CREATE TABLE IF NOT EXISTS documents (
-                document_srl TEXT PRIMARY KEY, - 게시물 고유번호
-                href TEXT NOT NULL,            - 게시물 고유주소
-                title TEXT,                    - 게시물 제목
-                content TEXT,                  - 게시물 내용
-                view_count INT,                - 조회 수
-                comment_count INT,             - 댓글 수 
-                vote_up INT,                   - 개드립
-                vote_down INT,                 - 붐업
-                created_at TEXT,               - 작성시간
-                target_board TEXT,             - 게시판 이름
-                is_deleted INTEGER DEFAULT 0   - 삭제여부
+                document_srl TEXT PRIMARY KEY,  /* 게시물 고유번호 */
+                href TEXT NOT NULL,             /* 게시물 고유주소 */
+                title TEXT,                     /* 게시물 제목 */
+                content TEXT,                   /* 게시물 내용 */
+                view_count INT,                 /* 조회 수 */
+                comment_count INT,              /* 댓글 수 */
+                vote_up INT,                    /* 개드립 */
+                vote_down INT,                  /* 붐업 */
+                created_at TEXT,                /* 작성시간 */
+                target_board TEXT,              /* 게시판 이름 */
+                is_deleted INTEGER DEFAULT 0    /* 삭제여부 */
             )
-        """
+        """)
         self.conn.execute("CREATE INDEX IF NOT EXISTS d_target_board_idx ON documents(`target_board`)")
         self.conn.commit()
         # 댓글
-        self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS comments (comment_srl TEXT PRIMARY KEY, target_srl  TEXT, content TEXT, created_at TEXT, target_board TEXT, has_child INTEGER DEFAULT 0)")
-        """
+        self.conn.execute("""
             CREATE TABLE IF NOT EXISTS comments (
-                comment_srl TEXT PRIMARY KEY,  - 댓글 고유번호
-                target_srl  TEXT,              - 댓글이 작성된 원래 문서의 고유번호
-                content TEXT,                  - 댓글 내용
-                created_at TEXT,               - 작성 시간
-                target_board TEXT,             - 게시판 이름
-                has_child INTEGER DEFAULT 0    - 대댓글 여부
+                comment_srl TEXT PRIMARY KEY,  /* 댓글 고유번호 */
+                target_srl  TEXT,              /* 댓글이 작성된 원래 문서의 고유번호 */
+                content TEXT,                  /* 댓글 내용 */
+                created_at TEXT,               /* 작성 시간 */
+                target_board TEXT,             /* 게시판 이름 */
+                has_child INTEGER DEFAULT 0    /* 대댓글 여부 */
             )
-        """
+        """)
         self.conn.execute("CREATE INDEX IF NOT EXISTS c_target_board_idx ON comments(`target_board`)")
         self.conn.commit()
+        self.logger.info("SQLite3 초기화 완료!")
 
     def login(self):
         self.dogdripBrowser.load_browser(self.driverPath)
         self.dogdripBrowser.login()
         pass
 
+    def fetch_document_list(self):
+        self.logger.info("작성한 게시물 목록을 불러오고 있습니다...")
+        html = self.dogdripBrowser.load_my_documents_html()
+        current_page, total_page = self.get_pagination_info(html.find('caption').get_text())
+        self.logger.info("총 %s페이지의 문서가 있습니다.", total_page)
+        for page in range(int(current_page), int(total_page) + 1):
+            self.logger.info("총 %s페이지 중 %s페이지를 수집하고있습니다.", str(total_page), str(page))
+            html = self.dogdripBrowser.load_my_documents_html(page)
+            html_document_list = html.find_all('tr')
+            documents = self.parse_document(html_document_list)
+            self.insert_documents(documents)
+
+    def parse_document(self, html_document_list):
+        documents = []
+        pattern = re.compile(r'\s\[\d*.\]$')
+        if html_document_list:
+            for document_list in html_document_list:
+                # 마이페이지에서 수집할 수 있는 문서 정보 저장
+                content = document_list.find("td", {"class": "wide"})
+                if content:
+                    document = content.find("a")
+                    if document:
+                        href = document['href']
+                        document_srl = urlparse(href).path
+                        while os.path.dirname(document_srl) != '/':
+                            document_srl = os.path.dirname(document_srl)
+                        document_srl = document_srl.replace('/', '')
+                        comment_count = pattern.findall(content.get_text().strip())
+                        if comment_count:
+                            comment_count = comment_count[0].replace('[', '').replace(']', '').strip()
+                        else:
+                            comment_count = "0"
+                        title = document.get_text()
+                        view_count = document.findNext()
+                        vote_up = view_count.findNext()
+                        created_at = vote_up.findNext().get_text()
+                        self.logger.debug("원본 게시물 번호: %s, 게시물 주소: %s, 제목: %s, 댓글 수: %s, 조회 수: %s, 개드립 수: %s, 작성일: %s",
+                                          document_srl, href, title, comment_count, view_count.get_text(),
+                                          vote_up.get_text(), created_at)
+
+                        documents.append((document_srl, href, title, comment_count, view_count.get_text(),
+                                          vote_up.get_text(), created_at))
+            return documents
+        else:
+            return None
+
     def fetch_comment_list(self):
+        self.logger.info("작성한 댓글 목록을 불러오고 있습니다...")
         html = self.dogdripBrowser.load_my_comments_html()
         current_page, total_page = self.get_pagination_info(html.find('caption').get_text())
         self.logger.info("총 %s페이지의 댓글이 있습니다.", total_page)
         for page in range(int(current_page), int(total_page) + 1):
-            self.logger.info("총 %s페이지 중 %s페이지의 댓글들을 수집하고있습니다.", str(page))
+            self.logger.info("총 %s페이지 중 %s페이지를 수집하고있습니다.", str(total_page), str(page))
             html = self.dogdripBrowser.load_my_comments_html(page)
             html_comment_list = html.find_all('tr')
             comments = self.parse_comment(html_comment_list)
-            self.insert_comments(comments);
+            self.insert_comments(comments)
 
     def parse_comment(self, html_comment_list):
         comments = []
@@ -144,7 +189,7 @@ class DogdripRemover(object):
                         comment_srl = comment['href'].split("#")[1].split("_")[1]
                         created_at = comment_list.find("td", {"class": "nowrap"}).get_text()
                         self.logger.debug("원본 게시물 번호: %s, 댓글 고유번호: %s, 댓글내용: %s, 작성시간: %s", target_srl, comment_srl,
-                                          comment.get_text(), created_at)
+                                          comment.get_text(), created_at.strip())
                         if not comment.get_text() == "[삭제 되었습니다]":
                             comments.append((comment_srl, target_srl, comment.get_text(), created_at))
             return comments
@@ -154,7 +199,12 @@ class DogdripRemover(object):
     def insert_comments(self, comments):
         insert_into_comments = "INSERT INTO comments(comment_srl, target_srl, content, created_at) VALUES (?,?,?,datetime(?)) "
         self.cur.executemany(insert_into_comments, comments)
-        self.conn.commit();
+        self.conn.commit()
+
+    def insert_documents(self, documents):
+        insert_into_documents = "INSERT INTO documents(document_srl, href, title, comment_count, view_count, vote_up, created_at) VALUES (?,?,?,?,?,?,date(?)) "
+        self.cur.executemany(insert_into_documents, documents)
+        self.conn.commit()
 
     @classmethod
     def get_pagination_info(cls, text):
