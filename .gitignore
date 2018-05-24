@@ -49,3 +49,5 @@ config.py
 chromedriver.zip
 chromedriver
 chromedriver.exe
+
+*.db
