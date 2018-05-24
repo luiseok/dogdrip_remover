@@ -46,3 +46,6 @@ tmtagsHistory
 config.py
 
 .idea/*
+chromedriver.zip
+chromedriver
+chromedriver.exe
