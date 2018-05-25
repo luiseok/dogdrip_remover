@@ -198,8 +198,8 @@ class DogdripRemover(object):
                         target_srl = target_srl.replace('/', '')
                         comment_srl = comment['href'].split("#")[1].split("_")[1]
                         created_at = comment_list.find("td", {"class": "nowrap"}).get_text()
-                        self.logger.debug("원본 게시물 번호: %s, 댓글 고유번호: %s, 댓글내용: %s, 작성시간: %s", target_srl, comment_srl,
-                                          comment.get_text(), created_at.strip())
+                        self.logger.debug("원본 게시물 번호: %s, 댓글 고유번호: %s, 작성시간: %s", target_srl, comment_srl,
+                                          created_at.strip())
                         if not comment.get_text() == "[삭제 되었습니다]":
                             comments.append((comment_srl, target_srl, comment['href'], comment.get_text(), created_at))
             return comments
@@ -233,7 +233,6 @@ class DogdripRemover(object):
         new_infos = []
         for result in results:
             if result:
-                self.logger.debug(result)
                 comment_srl = result[0][0]
                 target_board = result[1]
                 has_child = result[2]
@@ -245,7 +244,7 @@ class DogdripRemover(object):
         start_time = millis()
         with requests.get(comment[2]) as res:
             if res.status_code == 200:
-                # self.logger.debug("페이지 로드완료. 시간: %sms, url: %s", str(millis() - start_time), comment[2])
+                self.logger.debug("페이지 로드완료. 시간: %sms, url: %s", str(millis() - start_time), comment[2])
                 page = res.text
                 page = BeautifulSoup(page, 'html.parser')
                 # 게시판 주소 찾기
@@ -321,6 +320,26 @@ class DogdripRemover(object):
             self.cur.execute("SELECT * FROM documents")
             documents = self.cur.fetchall()
             return documents
+
+    def delete_all_documents_job(self):
+        documents = self.documents_find_all()
+        pool = Pool(processes=config.get('process_concurrency'))
+        results = pool.imap_unordered(self.request_comment_info, documents)
+
+    def delete_selenium(self, document):
+        document_srl = document[0],
+        pass
+
+    def delete_all_comments_job(self):
+        comments = self.comments_find_all()
+        # pool = Pool(processes=config.get('process_concurrency'))
+        # results = pool.imap_unordered(self.delete_selenium_comments, comments)
+        for comment in comments:
+            self.delete_selenium_comments(comment)
+            time.sleep(1)
+
+    def delete_selenium_comments(self, comment):
+        return self.dogdripBrowser.delete_comment(comment)
 
     def __del__(self):
         self.logger.debug("DogdripRemover 인스턴스가 종료되었습니다.")
