@@ -224,7 +224,7 @@ class DogdripRemover(object):
 
     def add_comment_detail_job(self, comments):
         pool = Pool(processes=config.get('process_concurrency'))
-        results = pool.imap_unordered(self.request_site, comments)
+        results = pool.imap_unordered(self.request_comment_info, comments)
         self.update_comment_detail(results)
 
     def update_comment_detail(self, results):
@@ -241,7 +241,7 @@ class DogdripRemover(object):
         self.cur.executemany(updatesql, new_infos)
         self.conn.commit()
 
-    def request_site(self, comment):
+    def request_comment_info(self, comment):
         start_time = millis()
         with requests.get(comment[2]) as res:
             if res.status_code == 200:
@@ -267,6 +267,60 @@ class DogdripRemover(object):
             self.cur.execute("SELECT * FROM COMMENTS")
             comments = self.cur.fetchall()
             return comments
+
+    def add_document_detail_job(self, documents):
+        pool = Pool(processes=config.get('process_concurrency'))
+        results = pool.imap_unordered(self.request_document_info, documents)
+        self.update_document_detail(results)
+
+    def update_document_detail(self, results):
+        self.logger.debug("게시물에 상세정보를 추가합니다.")
+        updatesql = "UPDATE documents SET target_board=?, content=? WHERE document_srl=?"
+        new_infos = []
+        for result in results:
+            if result:
+                document_srl = result[0][0]
+                target_board = result[1]
+                content = result[2]
+                new_infos.append((target_board, content, document_srl))
+            else:
+                pass
+        self.cur.executemany(updatesql, new_infos)
+        self.conn.commit()
+
+    def request_document_info(self, document):
+        start_time = millis()
+        with requests.get(document[1]) as res:
+            if res.status_code == 200:
+                self.logger.debug("페이지 로드완료. 시간: %sms, url: %s", str(millis() - start_time), document[1])
+                page = res.text
+                page = BeautifulSoup(page, 'html.parser')
+                # 게시판 주소 찾기
+                board_title = page.find_all("div", {"class": "boardHeaderBorder"})
+                board_name = ''
+                if board_title:
+                    board_name = urlparse(board_title[0].find("a")["href"]).path.replace('/', '')
+                content = page.find_all("div", {"class": "xe_content"})
+                if content:
+                    content = content[0].get_text().strip()
+                if board_name == '':
+                    self.logger.debug("게시물 파싱 불가. 직접 삭제 요망. 주소: %s",  document[1])
+                    return None
+                if not content:
+                    self.logger.debug("게시물 파싱 불가. 직접 삭제 요망. 주소: %s", document[1])
+                    return None
+
+                return document, board_name, content
+
+    def collect_document_details(self):
+        documents = self.documents_find_all()
+        self.add_document_detail_job(documents)
+
+    def documents_find_all(self):
+        with self.conn:
+            self.cur.execute("SELECT * FROM documents")
+            documents = self.cur.fetchall()
+            return documents
 
     def __del__(self):
         self.logger.debug("DogdripRemover 인스턴스가 종료되었습니다.")
