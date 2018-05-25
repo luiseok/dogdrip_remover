@@ -21,6 +21,8 @@ class XpressEngine(object):
     MY_PAGE = '/index.php?act=dispMemberInfo'
     OWN_DOCUMENTS = '/index.php?act=dispMemberOwnDocument'
     OWN_COMMENTS = '/index.php?act=dispMemberOwnComment'
+    DELETE_COMMENT = '/index.php?act=dispBoardDeleteComment&document_srl='
+    CSRL = '&comment_srl='
 
     def __init__(self, url=None, user_id=None, password=None, headless=False):
         self.logger.debug("xe_crawler instance created")
@@ -94,6 +96,15 @@ class XpressEngine(object):
             'return window.document.getElementsByClassName("colTable")[0].innerHTML'
         )
         return BeautifulSoup(html, 'html.parser')
+
+    def click_by_xpath(self, element):
+        self.browser.find_element_by_xpath(element).click()
+
+    def delete_comment(self, comment):
+        if not comment[5] == 'temp':
+            self.browser.get(self.url + self.DELETE_COMMENT + comment[1] + self.CSRL + comment[0])
+            self.click_by_xpath('//*[@id="content"]/div[1]/div/form/div/span/input')
+            self.browser.implicitly_wait(10)
 
     def quit(self):
         if self.browser:
