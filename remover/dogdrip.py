@@ -1,3 +1,6 @@
+from multiprocessing.pool import ThreadPool as Pool
+
+import requests
 import wget
 import zipfile
 import platform
@@ -9,11 +12,17 @@ import re
 
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
+import urllib.request
 from pathlib import Path
 from toollib.logger import Logger
+from bs4 import BeautifulSoup
 
 from crawler.xe import XpressEngine
 from config import config
+
+
+def millis():
+    return int(round(time.time() * 1000))
 
 
 class DogdripRemover(object):
@@ -99,6 +108,7 @@ class DogdripRemover(object):
             CREATE TABLE IF NOT EXISTS comments (
                 comment_srl TEXT PRIMARY KEY,  /* 댓글 고유번호 */
                 target_srl  TEXT,              /* 댓글이 작성된 원래 문서의 고유번호 */
+                href TEXT NOT NULL,            /* 고유 주소 */
                 content TEXT,                  /* 댓글 내용 */
                 created_at TEXT,               /* 작성 시간 */
                 target_board TEXT,             /* 게시판 이름 */
@@ -191,13 +201,13 @@ class DogdripRemover(object):
                         self.logger.debug("원본 게시물 번호: %s, 댓글 고유번호: %s, 댓글내용: %s, 작성시간: %s", target_srl, comment_srl,
                                           comment.get_text(), created_at.strip())
                         if not comment.get_text() == "[삭제 되었습니다]":
-                            comments.append((comment_srl, target_srl, comment.get_text(), created_at))
+                            comments.append((comment_srl, target_srl, comment['href'], comment.get_text(), created_at))
             return comments
         else:
             return None
 
     def insert_comments(self, comments):
-        insert_into_comments = "INSERT INTO comments(comment_srl, target_srl, content, created_at) VALUES (?,?,?,datetime(?)) "
+        insert_into_comments = "INSERT INTO comments(comment_srl, target_srl, href, content, created_at) VALUES (?,?,?,?,datetime(?)) "
         self.cur.executemany(insert_into_comments, comments)
         self.conn.commit()
 
@@ -211,6 +221,52 @@ class DogdripRemover(object):
         pattern = re.compile(r'\b[0-9]*.\/.[0-9]*')
         pagination = pattern.findall(text)
         return pagination[0].split('/')
+
+    def add_comment_detail_job(self, comments):
+        pool = Pool(processes=config.get('process_concurrency'))
+        results = pool.imap_unordered(self.request_site, comments)
+        self.update_comment_detail(results)
+
+    def update_comment_detail(self, results):
+        self.logger.debug("댓글에 상세정보를 추가합니다.")
+        updatesql = "UPDATE comments SET target_board=?, has_child=? WHERE comment_srl=?"
+        new_infos = []
+        for result in results:
+            if result:
+                self.logger.debug(result)
+                comment_srl = result[0][0]
+                target_board = result[1]
+                has_child = result[2]
+                new_infos.append((target_board, has_child, comment_srl))
+        self.cur.executemany(updatesql, new_infos)
+        self.conn.commit()
+
+    def request_site(self, comment):
+        start_time = millis()
+        with requests.get(comment[2]) as res:
+            if res.status_code == 200:
+                # self.logger.debug("페이지 로드완료. 시간: %sms, url: %s", str(millis() - start_time), comment[2])
+                page = res.text
+                page = BeautifulSoup(page, 'html.parser')
+                # 게시판 주소 찾기
+                # board_name = page.find_all("li", {"class": "category"})[-1].find("a")["href"].replace("/", "")
+                board_title = page.find_all("div", {"class": "boardHeaderBorder"})
+                board_name = ''
+                if board_title:
+                    board_name = urlparse(board_title[0].find("a")["href"]).path.replace('/', '')
+                # 대댓글 찾기
+                has_child = "1" if page.find_all("div", {"parent_srl": comment[0]}) else "0"
+                return comment, board_name, has_child
+
+    def collect_comment_details(self):
+        comments = self.comments_find_all()
+        self.add_comment_detail_job(comments)
+
+    def comments_find_all(self):
+        with self.conn:
+            self.cur.execute("SELECT * FROM COMMENTS")
+            comments = self.cur.fetchall()
+            return comments
 
     def __del__(self):
         self.logger.debug("DogdripRemover 인스턴스가 종료되었습니다.")
