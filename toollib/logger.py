@@ -23,15 +23,15 @@ def get_logger(logger_name):
     else:
         level = logging.WARNING
     Logger.setLevel(level)
-    LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
-                  '-35s %(process)d  %(lineno) -5d: %(message)s')
+    LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(name) -20s %(funcName) '
+                  '-20s %(process)d  %(lineno) -5d: %(message)s')
     LOG_FORMAT_DEP = '[%(levelname)s|%(filename)s:%(lineno)s-%(process)d] %(asctime)s > %(message)s'
     formatter = logging.Formatter(LOG_FORMAT)
-    dir = "../logs/"
+    dir = "./logs/"
     if not os.path.exists(os.path.dirname(dir)):
         os.makedirs(dir)
 
-    logname = "../logs/" + logger_name + ".log"
+    logname = "./logs/" + logger_name + ".log"
 
     if not os.path.exists(logname):
         fh = open(logname, "w")
