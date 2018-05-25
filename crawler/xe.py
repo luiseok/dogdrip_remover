@@ -96,5 +96,9 @@ class XpressEngine(object):
         return BeautifulSoup(html, 'html.parser')
 
     def quit(self):
-        self.browser.quit()
+        if self.browser:
+            self.browser.quit()
         pass
+
+    def __del__(self):
+        self.quit()
