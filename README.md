@@ -41,3 +41,6 @@
 - [ ]  멀티프로세싱 갯수 지정
 
 추가적으로 필요한 기능이 있는 경우 Issue에 남겨주시거나, 본 Repository를 fork 하셔서 기능 추가하신 후 PR 남겨주세요. 
+
+##### 출처
+실행 파일 Icon - [openclipart](https://openclipart.org/detail/228877/recycle-bin-icon)
