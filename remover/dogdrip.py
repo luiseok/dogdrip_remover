@@ -36,11 +36,13 @@ class DogdripRemover(object):
     conn = None
     cur = None
 
+    # 생성자
+    # 크롬드라이버 설치, 데이터베이스 초기화 작업, Selenium 객체 생성
     def __init__(self, arch=platform.system()):
         self.logger.debug("DogdripRemover instance created")
         self.driverPath = None
-        self.conn = sqlite3.connect("my_dogdrip.db")
-        self.cur = self.conn.cursor()
+        self.conn = None
+        self.cur = None
         try:
             if not Path('./chromedriver.zip').is_file():
                 # 1. Chromedriver 설치
@@ -61,8 +63,15 @@ class DogdripRemover(object):
             if not arch == "Windows":
                 st = os.stat(self.driverPath)
                 os.chmod(self.driverPath, st.st_mode | stat.S_IEXEC)
-                self.logger.debug("크롬 드라이버 권한 변경 완료 +x")
-            self.db_initialize()
+                self.logger.debug("크롬 드라이버 실행 권한 변경 완료")
+            # SQLite3 초기화
+            if not Path('./my_dogdrip.db').is_file(): #데이터베이스 없는 경우
+                self.conn = sqlite3.connect("my_dogdrip.db")
+                self.cur = self.conn.cursor()
+                self.db_initialize()
+            else:
+                self.conn = sqlite3.connect("my_dogdrip.db")
+                self.cur = self.conn.cursor()
 
         except sqlite3.Error as e:
             self.logger.error("데이터베이스 초기화에 실패했습니다.")
@@ -112,30 +121,99 @@ class DogdripRemover(object):
                 content TEXT,                  /* 댓글 내용 */
                 created_at TEXT,               /* 작성 시간 */
                 target_board TEXT,             /* 게시판 이름 */
-                has_child INTEGER DEFAULT 0    /* 대댓글 여부 */
+                has_child INTEGER DEFAULT 0,    /* 대댓글 여부 */
+                is_deleted INTEGER DEFAULT 0    /* 삭제여부 */
             )
         """)
         self.conn.execute("CREATE INDEX IF NOT EXISTS c_target_board_idx ON comments(`target_board`)")
         self.conn.commit()
         self.logger.info("SQLite3 초기화 완료!")
 
+    # SQLite3 에 댓글 정보 삽입
+    def insert_comments(self, comments):
+        insert_into_comments = "INSERT OR REPLACE INTO comments(comment_srl, target_srl, href, content, created_at) " \
+                               "VALUES (?,?,?,?,datetime(?)) "
+        self.cur.executemany(insert_into_comments, comments)
+        self.conn.commit()
+
+    # SQLite3 에 문서 정보 삽입
+    def insert_documents(self, documents):
+        insert_into_documents = "INSERT OR REPLACE INTO documents(document_srl, href, title, comment_count, " \
+                                "view_count, vote_up, created_at) VALUES (?,?,?,?,?,?,date(?)) "
+        self.cur.executemany(insert_into_documents, documents)
+        self.conn.commit()
+
     def login(self):
         self.dogdripBrowser.load_browser(self.driverPath)
         self.dogdripBrowser.login()
         pass
 
+    def comments_find_all(self):
+        with self.conn:
+            self.cur.execute("SELECT * FROM COMMENTS")
+            comments = self.cur.fetchall()
+            return comments
+
+    def comments_find_not_deleted(self):
+        with self.conn:
+            self.cur.execute("SELECT * FROM comments")
+            comments = self.cur.fetchall()
+            return comments
+
+    def update_document_detail(self, results):
+        self.logger.debug("게시물에 상세정보를 추가합니다.")
+        updatesql = "UPDATE documents SET target_board=?, content=? WHERE document_srl=?"
+        new_infos = []
+        for result in results:
+            if result:
+                document_srl = result[0][0]
+                target_board = result[1]
+                content = result[2]
+                new_infos.append((target_board, content, document_srl))
+            else:
+                pass
+        self.cur.executemany(updatesql, new_infos)
+        self.conn.commit()
+
+    def update_comment_detail(self, results):
+        self.logger.debug("댓글에 상세정보를 추가합니다.(소속 게사판, 대댓글여부)")
+        updatesql = "UPDATE comments SET target_board=?, has_child=? WHERE comment_srl=?"
+        new_infos = []
+        for result in results:
+            if result:
+                comment_srl = result[0][0]
+                target_board = result[1]
+                has_child = result[2]
+                new_infos.append((target_board, has_child, comment_srl))
+        self.cur.executemany(updatesql, new_infos)
+        self.conn.commit()
+
+    def update_is_deleted(self, doc, type='comment'):
+        self.logger.debug("삭제여부를 변경합니다.")
+        self.logger.debug(doc)
+        if type == 'comment':
+            updatesql = "UPDATE comments SET is_deleted='1' WHERE comment_srl=?"
+            self.cur.execute(updatesql, [doc[0]])
+        elif type == 'document':
+            updatesql = "UPDATE documents SET is_deleted='1' WHERE document_srl=?"
+            self.cur.execute(updatesql, [doc[0]])
+        pass
+
+    # 게시물 목록으로부터 게시물 기초 정보 수집
+    # 게시물 번호, 제목, 주소, 조회수, 추천수, 작성시각
     def fetch_document_list(self):
         self.logger.info("작성한 게시물 목록을 불러오고 있습니다...")
         html = self.dogdripBrowser.load_my_documents_html()
         current_page, total_page = self.get_pagination_info(html.find('caption').get_text())
         self.logger.info("총 %s페이지의 문서가 있습니다.", total_page)
         for page in range(int(current_page), int(total_page) + 1):
-            self.logger.info("총 %s페이지 중 %s페이지를 수집하고있습니다.", str(total_page), str(page))
+            self.logger.info("%s페이지 중 %s페이지를 수집하고있습니다.", str(total_page), str(page))
             html = self.dogdripBrowser.load_my_documents_html(page)
             html_document_list = html.find_all('tr')
             documents = self.parse_document(html_document_list)
             self.insert_documents(documents)
 
+    # 문서 정보 파싱
     def parse_document(self, html_document_list):
         documents = []
         pattern = re.compile(r'\s\[\d*.\]$')
@@ -170,6 +248,8 @@ class DogdripRemover(object):
         else:
             return None
 
+    # 댓글 목록으로부터 게시물 기초 정보 수집
+    # 댓글내용, 댓글번호, 원게시물 번호, 댓글주소, 작성시각
     def fetch_comment_list(self):
         self.logger.info("작성한 댓글 목록을 불러오고 있습니다...")
         html = self.dogdripBrowser.load_my_comments_html()
@@ -182,6 +262,7 @@ class DogdripRemover(object):
             comments = self.parse_comment(html_comment_list)
             self.insert_comments(comments)
 
+    # 댓글 정보 파싱
     def parse_comment(self, html_comment_list):
         comments = []
 
@@ -199,22 +280,12 @@ class DogdripRemover(object):
                         comment_srl = comment['href'].split("#")[1].split("_")[1]
                         created_at = comment_list.find("td", {"class": "nowrap"}).get_text()
                         self.logger.debug("원본 게시물 번호: %s, 댓글 고유번호: %s, 작성시간: %s", target_srl, comment_srl,
-                                          created_at.strip())
+                                          created_at.strip().replace('\n', ' '))
                         if not comment.get_text() == "[삭제 되었습니다]":
                             comments.append((comment_srl, target_srl, comment['href'], comment.get_text(), created_at))
             return comments
         else:
             return None
-
-    def insert_comments(self, comments):
-        insert_into_comments = "INSERT INTO comments(comment_srl, target_srl, href, content, created_at) VALUES (?,?,?,?,datetime(?)) "
-        self.cur.executemany(insert_into_comments, comments)
-        self.conn.commit()
-
-    def insert_documents(self, documents):
-        insert_into_documents = "INSERT INTO documents(document_srl, href, title, comment_count, view_count, vote_up, created_at) VALUES (?,?,?,?,?,?,date(?)) "
-        self.cur.executemany(insert_into_documents, documents)
-        self.conn.commit()
 
     @classmethod
     def get_pagination_info(cls, text):
@@ -222,29 +293,19 @@ class DogdripRemover(object):
         pagination = pattern.findall(text)
         return pagination[0].split('/')
 
+    # 댓글 상세 정보 수집
+    # 대댓글 여부, 문서가 소속된 게시판 정보
     def add_comment_detail_job(self, comments):
         pool = Pool(processes=config.get('process_concurrency'))
         results = pool.imap_unordered(self.request_comment_info, comments)
         self.update_comment_detail(results)
 
-    def update_comment_detail(self, results):
-        self.logger.debug("댓글에 상세정보를 추가합니다.")
-        updatesql = "UPDATE comments SET target_board=?, has_child=? WHERE comment_srl=?"
-        new_infos = []
-        for result in results:
-            if result:
-                comment_srl = result[0][0]
-                target_board = result[1]
-                has_child = result[2]
-                new_infos.append((target_board, has_child, comment_srl))
-        self.cur.executemany(updatesql, new_infos)
-        self.conn.commit()
-
+    # 웹 요청 - 댓글 상세정보 수집
     def request_comment_info(self, comment):
         start_time = millis()
         with requests.get(comment[2]) as res:
             if res.status_code == 200:
-                self.logger.debug("페이지 로드완료. 시간: %sms, url: %s", str(millis() - start_time), comment[2])
+                self.logger.debug("댓글 로드완료. 시간: %sms, url: %s", str(millis() - start_time), comment[2])
                 page = res.text
                 page = BeautifulSoup(page, 'html.parser')
                 # 게시판 주소 찾기
@@ -261,31 +322,10 @@ class DogdripRemover(object):
         comments = self.comments_find_all()
         self.add_comment_detail_job(comments)
 
-    def comments_find_all(self):
-        with self.conn:
-            self.cur.execute("SELECT * FROM COMMENTS")
-            comments = self.cur.fetchall()
-            return comments
-
     def add_document_detail_job(self, documents):
         pool = Pool(processes=config.get('process_concurrency'))
         results = pool.imap_unordered(self.request_document_info, documents)
         self.update_document_detail(results)
-
-    def update_document_detail(self, results):
-        self.logger.debug("게시물에 상세정보를 추가합니다.")
-        updatesql = "UPDATE documents SET target_board=?, content=? WHERE document_srl=?"
-        new_infos = []
-        for result in results:
-            if result:
-                document_srl = result[0][0]
-                target_board = result[1]
-                content = result[2]
-                new_infos.append((target_board, content, document_srl))
-            else:
-                pass
-        self.cur.executemany(updatesql, new_infos)
-        self.conn.commit()
 
     def request_document_info(self, document):
         start_time = millis()
@@ -323,28 +363,37 @@ class DogdripRemover(object):
 
     def delete_all_documents_job(self):
         documents = self.documents_find_all()
-        pool = Pool(processes=config.get('process_concurrency'))
-        results = pool.imap_unordered(self.request_comment_info, documents)
+        # pool = Pool(processes=config.get('process_concurrency'))
+        # results = pool.imap_unordered(self.request_comment_info, documents)
+        for document in documents:
+            if self.delete_selenium_document(document):
+                self.update_is_deleted(document, type="document")
+                pass
 
-    def delete_selenium(self, document):
-        document_srl = document[0],
-        pass
+    def delete_selenium_document(self, document):
+        self.logger.debug(document)
+        return self.dogdripBrowser.delete_document(document)
 
     def delete_all_comments_job(self):
-        comments = self.comments_find_all()
+        comments = self.comments_find_not_deleted()
         # pool = Pool(processes=config.get('process_concurrency'))
         # results = pool.imap_unordered(self.delete_selenium_comments, comments)
         for comment in comments:
-            self.delete_selenium_comments(comment)
-            time.sleep(1)
+            if self.delete_selenium_comment(comment):
+                self.update_is_deleted(comment, type="comment")
+                pass
 
-    def delete_selenium_comments(self, comment):
-        return self.dogdripBrowser.delete_comment(comment)
+    def delete_selenium_comment(self, comment):
+        if not comment[5] == 'temp':
+            self.logger.debug(comment)
+            return self.dogdripBrowser.delete_comment(comment)
 
     def __del__(self):
         self.logger.debug("DogdripRemover 인스턴스가 종료되었습니다.")
         try:
             self.dogdripBrowser.quit()
+            self.cur.close()
+            self.conn.close()
         except Exception as e:
             self.logger.exception(str(e))
             pass
