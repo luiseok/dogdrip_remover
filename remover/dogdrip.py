@@ -82,10 +82,10 @@ class DogdripRemover(object):
             self.logger.exception(e)
             exit(1)
 
-        self.dogdripBrowser = XpressEngine(url=self.WEBSITE_URL,
-                                           user_id=config.get('user_id'),
-                                           password=config.get('password'),
-                                           headless=False)
+        # self.dogdripBrowser = XpressEngine(url=self.WEBSITE_URL,
+        #                                    user_id=config.get('user_id'),
+        #                                    password=config.get('password'),
+        #                                    headless=False)
 
     def db_initialize(self):
         """
@@ -143,7 +143,11 @@ class DogdripRemover(object):
         self.cur.executemany(insert_into_documents, documents)
         self.conn.commit()
 
-    def login(self):
+    def login(self, user_id=config.get('user_id'), password=config.get('password')):
+        self.dogdripBrowser = XpressEngine(url=self.WEBSITE_URL,
+                                           user_id=user_id,
+                                           password=password,
+                                           headless=False)
         self.dogdripBrowser.load_browser(self.driverPath)
         return self.dogdripBrowser.login()
 

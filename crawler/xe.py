@@ -79,9 +79,11 @@ class XpressEngine(object):
             if WebDriverWait(self.browser, 10).until(
                     EC.visibility_of_element_located((By.XPATH, '//*[@id="header_login"]/span[2]/a'))):
                 self.logger.info("로그인 성공")
+                self.insert_processing_overlay()
                 result = True
             else:
                 self.logger.error("로그인에 실패했습니다.")
+                self.browser.close()
         except Exception as e:
             self.logger.error(e)
         finally:
