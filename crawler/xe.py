@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 from selenium import webdriver
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, UnexpectedAlertPresentException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -63,14 +63,31 @@ class XpressEngine(object):
         self.browser.find_element_by_xpath('//*[@id="upw"]').send_keys(self.password)
         # 로그인
         self.browser.find_element_by_xpath('//*[@id="commonLogin"]/fieldset/span[2]/input').click()
-        if WebDriverWait(self.browser, 10).until(
-                EC.visibility_of_element_located((By.XPATH, '//*[@id="header_login"]/span[2]/a'))):
-            self.logger.info("로그인 성공")
-        else:
-            self.logger.error("로그인에 실패했습니다.")
-            exit(1)
-        time.sleep(1)
+        result = False
+        try:
+            WebDriverWait(self.browser, 2).until(EC.alert_is_present(), 'Timed out waiting for PA creation')
+            alert = self.browser.switch_to.alert
+            if alert:
+                self.logger.error("로그인에 실패했습니다.")
+                self.logger.error(alert.text.replace('\n', ' '))
+                alert.accept()
+                return result
+        except TimeoutException as e:
+            pass
 
+        try:
+            if WebDriverWait(self.browser, 10).until(
+                    EC.visibility_of_element_located((By.XPATH, '//*[@id="header_login"]/span[2]/a'))):
+                self.logger.info("로그인 성공")
+                result = True
+            else:
+                self.logger.error("로그인에 실패했습니다.")
+        except Exception as e:
+            self.logger.error(e)
+        finally:
+            return result
+            # exit(1)
+        # time.sleep(1)
 
     def insert_processing_overlay(self):
         self.browser.execute_script("""

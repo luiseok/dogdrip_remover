@@ -145,8 +145,7 @@ class DogdripRemover(object):
 
     def login(self):
         self.dogdripBrowser.load_browser(self.driverPath)
-        self.dogdripBrowser.login()
-        pass
+        return self.dogdripBrowser.login()
 
     def comments_find_all(self):
         with self.conn:
