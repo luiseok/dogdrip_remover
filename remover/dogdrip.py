@@ -197,9 +197,11 @@ class DogdripRemover(object):
         if type == 'comment':
             updatesql = "UPDATE comments SET is_deleted='1' WHERE comment_srl=?"
             self.cur.execute(updatesql, [doc[0]])
+            self.conn.commit()
         elif type == 'document':
             updatesql = "UPDATE documents SET is_deleted='1' WHERE document_srl=?"
             self.cur.execute(updatesql, [doc[0]])
+            self.conn.commit()
         pass
 
     # 게시물 목록으로부터 게시물 기초 정보 수집
